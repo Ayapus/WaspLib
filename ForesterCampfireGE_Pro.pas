@@ -49,6 +49,7 @@ var
   LogsBurnt: Int32;
 
   FireTile: TPoint; // sentinel/flag only
+  CreatedFirePosition: TPoint; // tracks the position of the created fire
   IsCurrentlyBurning: Boolean = False;
 
   SlotTinder, SlotLogs, InvSig: Int32;
@@ -385,31 +386,77 @@ begin
   Result := True;
 end;
 
+// Look for the created fire specifically near the tracked position
+function AcquireCreatedFireBox(out fireBox: TBox): Boolean;
+var
+  p: TPoint;
+  search: TBox;
+  around: TPoint;
+begin
+  Result := False;
+  
+  // If we have a tracked fire position, search around that area
+  if (CreatedFirePosition.X > 0) and (CreatedFirePosition.Y > 0) then
+  begin
+    around := CreatedFirePosition;
+    search := Box(around.X-40, around.Y-40, around.X+40, around.Y+40);
+    if FindFirePointInBox(search, p) then
+    begin
+      fireBox := BoxClamped(p.X-22, p.Y-22, p.X+22, p.Y+22);
+      Exit(True);
+    end;
+  end;
+  
+  // Fallback to player-centered search
+  around := SafePlayerCenter();
+  search := Box(around.X-50, around.Y-50, around.X+50, around.Y+50);
+  if FindFirePointInBox(search, p) then
+  begin
+    if Hypot(p.X - around.X, p.Y - around.Y) < 60 then
+    begin
+      fireBox := BoxClamped(p.X-22, p.Y-22, p.X+22, p.Y+22);
+      Exit(True);
+    end;
+  end;
+end;
+
 // Avoid Map.TileTo* and walker functions that may not exist
 function AcquireFireBox(out fireBox: TBox): Boolean;
 var
   p, around: TPoint;
   search: TBox;
+  playerBox: TBox;
 begin
   Result := False;
 
-  // 1) Large scan around player
+  // 1) Focus on a smaller area around the player to avoid permanent fires
   around := SafePlayerCenter();
-  search := Box(around.X-180, around.Y-180, around.X+180, around.Y+180);
+  playerBox := MainScreen.GetPlayerBox();
+  
+  // Search in a much smaller radius around the player (avoid permanent fires)
+  search := Box(around.X-60, around.Y-60, around.X+60, around.Y+60);
   if FindFirePointInBox(search, p) then
   begin
-    fireBox := BoxClamped(p.X-22, p.Y-22, p.X+22, p.Y+22);
-    Exit(True);
+    // Double-check that the fire is close to the player
+    if Hypot(p.X - around.X, p.Y - around.Y) < 80 then
+    begin
+      fireBox := BoxClamped(p.X-22, p.Y-22, p.X+22, p.Y+22);
+      Exit(True);
+    end;
   end;
 
-  // 2) Fallback: object hover/walk-hover, derive box from mouse
+  // 2) Fallback: object hover/walk-hover, but only if it's close to player
   if FireObj.Hover() or FireObj.WalkHover() then
   begin
     if MainScreen.IsUpText(['Fire','Campfire'], 160) then
     begin
       p := Mouse.Position;
-      fireBox := BoxClamped(p.X-20, p.Y-20, p.X+20, p.Y+20);
-      Exit(True);
+      // Only use this fire if it's close to the player
+      if Hypot(p.X - around.X, p.Y - around.Y) < 100 then
+      begin
+        fireBox := BoxClamped(p.X-20, p.Y-20, p.X+20, p.Y+20);
+        Exit(True);
+      end;
     end;
   end;
 end;
@@ -631,6 +678,10 @@ begin
     Exit(False);
   end;
 
+  // Track the position of the created fire for future reference
+  CreatedFirePosition := SafePlayerCenter();
+  FMInfo('Created fire position tracked at: ' + ToStr(CreatedFirePosition.X) + ',' + ToStr(CreatedFirePosition.Y));
+
   WaitGameTicks(PREF_SPACE_TICKS);
   PressSpaceOnce();
 
@@ -672,10 +723,14 @@ var fireBox: TBox; attempts: Int32;
 begin
   FMStatus('Initiating burn session');
 
-  if not AcquireFireBox(fireBox) then
+  // Try to find the created fire first, then fallback to general fire detection
+  if not AcquireCreatedFireBox(fireBox) then
   begin
-    FMWarn('Fire not found on screen.');
-    Exit;
+    if not AcquireFireBox(fireBox) then
+    begin
+      FMWarn('Created fire not found on screen.');
+      Exit;
+    end;
   end;
 
   // Try to find and click on the bonfire directly (no logs needed)
@@ -762,8 +817,12 @@ begin
   if FireTile.X < 0 then
     Exit(STATE_INITIAL_SETUP);
 
-  if not AcquireFireBox(fb) then
-    Exit(STATE_WALKING_TO_FIRE);
+  // Try to find the created fire first, then fallback to general fire detection
+  if not AcquireCreatedFireBox(fb) then
+  begin
+    if not AcquireFireBox(fb) then
+      Exit(STATE_WALKING_TO_FIRE);
+  end;
 
   Exit(STATE_BURNING_LOGS);
 end;
@@ -904,6 +963,7 @@ begin
   LogsBurnt := 0;
   NextStatsReportTime := GetTickCount() + 15000;
   FireTile := Point(-1,-1); // flag: initial setup not done
+  CreatedFirePosition := Point(0,0); // will be set when fire is created
   IsCurrentlyBurning := False;
   InvSig := -1;
 end;
