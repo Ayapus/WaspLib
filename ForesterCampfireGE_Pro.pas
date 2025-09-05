@@ -10,7 +10,7 @@ program ForesterCampfireGE_Pro;
 
 const
   CAMP_UPTEXT: TStringArray = [
-    'Tend-to Forester''s campfire', 'Tend to Forester''s campfire',
+    'Tend to Forester''s campfire', 'Tend-to Forester''s campfire',
     'Add logs', 'Add to campfire', 'Tend-to', 'Tend', 'Add'
   ];
   ROGUES_DEN_BANK_UPTEXT: TStringArray = ['Bank Bank chest', 'Use Bank chest', 'Bank'];
@@ -668,7 +668,7 @@ begin
 end;
 
 procedure Handle_Burning();
-var fireBox: TBox;
+var fireBox: TBox; attempts: Int32;
 begin
   FMStatus('Initiating burn session');
 
@@ -678,13 +678,47 @@ begin
     Exit;
   end;
 
-  if not UseLogsOnFire(SlotLogs, fireBox) then
+  // Try to find and click on the bonfire directly (no logs needed)
+  for attempts := 1 to 3 do
   begin
+    FMInfo('Attempt ' + IntToStr(attempts) + ' to tend to bonfire');
+    
     HumanMoveTo(fireBox, miInteract);
-    if not SafeUptextClick(CAMP_UPTEXT, 160, False) then
+    
+    // Look for the specific "Tend to Forester's campfire" uptext
+    if SafeUptextClick(['Tend to Forester''s campfire', 'Tend-to Forester''s campfire'], 200, False) then
     begin
-      Mouse.Click(MOUSE_RIGHT);
-      if not ChooseOption.Select(CAMP_UPTEXT) then Exit;
+      FMInfo('Successfully clicked on bonfire to tend it');
+      Break;
+    end;
+    
+    // Fallback to other campfire uptexts
+    if SafeUptextClick(CAMP_UPTEXT, 200, False) then
+    begin
+      FMInfo('Successfully clicked on bonfire using fallback uptext');
+      Break;
+    end;
+    
+    // Right-click menu fallback
+    Mouse.Click(MOUSE_RIGHT);
+    Wait(100, 200);
+    if ChooseOption.Select(['Tend to Forester''s campfire', 'Tend-to Forester''s campfire']) then
+    begin
+      FMInfo('Successfully clicked on bonfire via right-click menu');
+      Break;
+    end;
+    
+    if ChooseOption.Select(CAMP_UPTEXT) then
+    begin
+      FMInfo('Successfully clicked on bonfire via right-click fallback');
+      Break;
+    end;
+    
+    if attempts < 3 then
+    begin
+      FMWarn('Failed to interact with bonfire, retrying...');
+      Wait(Round(SRL.GaussRand(500, 300)));
+      SoftRecoverCamera();
     end;
   end;
 
